@@ -10,7 +10,7 @@ input\
     npp.8.7.Installer.x64.exe
 ```
 
-Then run `Build-IntuneWin.cmd` from the repo root. Each folder is packaged into `output\<folder name>.intunewin`.
+Then double-click `Start-Packaging.bat` in the repo root. Each folder is packaged into `output\<folder name>.intunewin`.
 
 Everything in an app's folder goes into its package, so keep only that app's setup files there. See [Packaging apps with Build-IntuneWin](../README.md#packaging-apps-with-build-intunewin) for how the setup file is picked.
 

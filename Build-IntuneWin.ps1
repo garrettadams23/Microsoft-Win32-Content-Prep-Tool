@@ -14,7 +14,8 @@
       2. An install script: install.ps1, install.cmd or install.bat
       3. The only .msi file
       4. The only .exe file
-    If none of these applies, name the setup file with -SetupFile.
+    If none of these applies, name the setup file with -SetupFile, or use
+    -PromptForSetupFile to be asked which file it is.
 
 .PARAMETER App
     Names of the app folders to package. By default every folder in the input
@@ -23,6 +24,11 @@
 .PARAMETER SetupFile
     The setup file to use, relative to the app folder (for example setup.exe or
     Files\setup.exe). Skips the automatic pick.
+
+.PARAMETER PromptForSetupFile
+    When the setup file can't be picked automatically, list the installer files
+    in the app folder and ask which one to use, instead of skipping the app.
+    Start-Packaging.bat turns this on.
 
 .PARAMETER InputFolder
     Folder that holds one subfolder per app. Default: input, next to this script.
@@ -48,6 +54,7 @@
 param(
     [string[]] $App,
     [string] $SetupFile,
+    [switch] $PromptForSetupFile,
     [string] $InputFolder = (Join-Path $PSScriptRoot 'input'),
     [string] $OutputFolder = (Join-Path $PSScriptRoot 'output'),
     [string] $ToolPath = (Join-Path $PSScriptRoot 'IntuneWinAppUtil.exe')
@@ -74,6 +81,28 @@ function Find-SetupFile([System.IO.DirectoryInfo] $Folder) {
         if ($match.Count -eq 1) { return $match[0] }
     }
     return $null
+}
+
+# Asks which installer file in an app folder is the setup file. Returns $null if
+# there are none to choose from.
+function Read-SetupFileChoice([System.IO.DirectoryInfo] $Folder) {
+    $candidates = @(Get-ChildItem -LiteralPath $Folder.FullName -File |
+        Where-Object { $_.Extension -in '.exe', '.msi', '.msp', '.ps1', '.cmd', '.bat' })
+    if ($candidates.Count -eq 0) { return $null }
+
+    Write-Host 'Which file is the setup file?'
+    for ($i = 0; $i -lt $candidates.Count; $i++) {
+        Write-Host "  $($i + 1). $($candidates[$i].Name)"
+    }
+    while ($true) {
+        $answer = Read-Host 'Type its number and press Enter (or just press Enter to skip this app)'
+        if (-not $answer) { throw 'No setup file chosen, so this app was skipped.' }
+        $number = 0
+        if ([int]::TryParse($answer, [ref] $number) -and $number -ge 1 -and $number -le $candidates.Count) {
+            return $candidates[$number - 1]
+        }
+        Write-Host "Enter a number from 1 to $($candidates.Count)."
+    }
 }
 
 if (-not (Test-Path -LiteralPath $ToolPath -PathType Leaf)) {
@@ -124,6 +153,9 @@ foreach ($folder in $appFolders) {
             }
         } else {
             $setup = Find-SetupFile $folder
+            if (-not $setup -and $PromptForSetupFile) {
+                $setup = Read-SetupFileChoice $folder
+            }
             if (-not $setup) {
                 throw "Couldn't tell which file in $($folder.FullName) is the setup file. Name it with: .\Build-IntuneWin.ps1 -App '$($folder.Name)' -SetupFile <file name>"
             }
