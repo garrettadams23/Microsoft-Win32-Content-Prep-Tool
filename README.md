@@ -26,7 +26,30 @@ You can also run `.\Build-IntuneWin.ps1` from PowerShell. It skips any app whose
 
 `-App` on its own packages only the apps you name. Run `Get-Help .\Build-IntuneWin.ps1 -Detailed` for all options.
 
-Only the README in `input` and `output` is committed to git (see `.gitignore`), so installers and packages stay out of the repo.
+Only the README in `input` and `output` and the two scripts in `input` are committed to git (see `.gitignore`), so installers and packages stay out of the repo.
+
+### Install and uninstall scripts
+
+[`input\install.ps1`](input/install.ps1) and [`input\uninstall.ps1`](input/uninstall.ps1) install and uninstall an app's `.msi` or `.exe` silently. When an app folder has no install script or PSAppDeployToolkit launcher of its own, packaging copies both into it, so `install.ps1` becomes the setup file. They're only copied when the app's installer is the only `.msi` or the only `.exe` in its folder, scripts already in an app folder are never replaced, and nothing is copied when you use `-SetupFile`. Delete them from `input` if you don't want them added.
+
+In Intune, use these commands for the app:
+
+- Install command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File install.ps1`
+- Uninstall command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1`
+
+Each script exits with the installer's exit code, so Intune's default return codes apply (3010 means a restart is needed), and logs to `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\<installer name>-install.log` or `-uninstall.log`, which Intune's **Collect diagnostics** includes. `uninstall.ps1` treats an app that isn't installed as uninstalled.
+
+The settings at the top of each script cover most apps:
+
+- `$Installer`: the file to run. By default, the only `.msi` in the folder, or the only `.exe`.
+- `$ExeArguments` in `install.ps1`: the switches that make an `.exe` install silently, `/S` by default. They depend on the tool the installer was made with, so check them for each `.exe`. The script lists the common ones.
+- `$MsiArguments` in `install.ps1`: extra `msiexec` arguments, such as public properties.
+- `$DisplayName` in `uninstall.ps1`: the app's name in **Settings > Apps**. By default, an `.msi` is uninstalled with `msiexec /x` and the `.msi` itself, and an `.exe` with the uninstall command of the app whose name starts with the product name in the `.exe`'s file properties. If more than one app matches, nothing is uninstalled.
+- `$ExeArguments` in `uninstall.ps1`: the switches added to an `.exe` app's uninstall command, unless it registered a silent one of its own.
+
+Edit the copy in an app folder to change one app, then package it again. Edit the ones in `input` to change what new app folders get.
+
+Because the setup file is `install.ps1` rather than the `.msi`, Intune doesn't fill in the MSI's product code, so add a detection rule yourself, for example **MSI** with the product code, or a file or registry rule.
 
 **Prerequisites**
 

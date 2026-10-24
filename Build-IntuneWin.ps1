@@ -17,6 +17,13 @@
     If none of these applies, name the setup file with -SetupFile, or use
     -PromptForSetupFile to be asked which file it is.
 
+    input\install.ps1 and input\uninstall.ps1 install and uninstall an app's
+    .msi or .exe silently. They're copied into each app folder that has no
+    install script or PSAppDeployToolkit launcher of its own, when its installer
+    is the only .msi or the only .exe there, so install.ps1 becomes its setup
+    file. Files already in an app folder are never replaced, and nothing is
+    copied when -SetupFile is used. Delete them from input\ to stop this.
+
 .PARAMETER App
     Names of the app folders to package. By default every folder in the input
     folder is packaged.
@@ -68,19 +75,54 @@ function Exit-Script([string] $Message) {
     exit 1
 }
 
+# Setup files that are picked ahead of an app's installer, in order.
+$setupScriptNames = 'Invoke-AppDeployToolkit.exe', 'Deploy-Application.exe', 'install.ps1', 'install.cmd', 'install.bat'
+# Scripts in the input folder that are copied into app folders.
+$appScriptNames = 'install.ps1', 'uninstall.ps1'
+
+# Returns the only .msi among some files, or if there isn't exactly one, the only
+# .exe, or $null.
+function Find-Installer([System.IO.FileInfo[]] $Files) {
+    foreach ($extension in '.msi', '.exe') {
+        $match = @($Files | Where-Object { $_.Extension -eq $extension })
+        if ($match.Count -eq 1) { return $match[0] }
+    }
+    return $null
+}
+
 # Returns the setup file for an app folder, or $null if there's no clear pick.
 function Find-SetupFile([System.IO.DirectoryInfo] $Folder) {
     $files = @(Get-ChildItem -LiteralPath $Folder.FullName -File)
 
-    foreach ($name in 'Invoke-AppDeployToolkit.exe', 'Deploy-Application.exe', 'install.ps1', 'install.cmd', 'install.bat') {
+    foreach ($name in $setupScriptNames) {
         $match = @($files | Where-Object { $_.Name -eq $name })
         if ($match.Count -eq 1) { return $match[0] }
     }
-    foreach ($extension in '.msi', '.exe') {
-        $match = @($files | Where-Object { $_.Extension -eq $extension })
-        if ($match.Count -eq 1) { return $match[0] }
+    return Find-Installer $files
+}
+
+# Copies install.ps1 and uninstall.ps1 from the input folder into an app folder
+# that has no install script of its own, when they can tell which installer in
+# it to run. Files already in the app folder are kept.
+function Add-InstallScripts([System.IO.DirectoryInfo] $Folder) {
+    $names = @($appScriptNames | Where-Object { Test-Path -LiteralPath (Join-Path $InputFolder $_) -PathType Leaf })
+    $files = @(Get-ChildItem -LiteralPath $Folder.FullName -File)
+    if ($names.Count -eq 0 -or ($files | Where-Object { $_.Name -in $setupScriptNames })) { return }
+
+    $installer = Find-Installer $files
+    if (-not $installer) {
+        Write-Warning "Didn't add $($names -join ' and '): they can only tell which installer to run when it's the only .msi or the only .exe in the app folder. To use them anyway, copy them in yourself and set `$Installer at the top of each."
+        return
     }
-    return $null
+    $added = @($names | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Folder.FullName $_)) })
+    if ($added.Count -eq 0) { return }
+    foreach ($name in $added) {
+        Copy-Item -LiteralPath (Join-Path $InputFolder $name) -Destination (Join-Path $Folder.FullName $name)
+    }
+    Write-Host "Added $($added -join ' and ') from $InputFolder"
+    if ($installer.Extension -eq '.exe') {
+        Write-Host "$($installer.Name) is an .exe, so check that the silent switches and app name at the top of $($added -join ' and ') in $($Folder.FullName) are right for it. Package it again if you change them." -ForegroundColor Yellow
+    }
 }
 
 # Asks which installer file in an app folder is the setup file. Returns $null if
@@ -126,7 +168,7 @@ if ($App) {
     })
 } else {
     # Files dropped straight into input\ instead of an app folder are a likely mistake.
-    $looseFiles = @(Get-ChildItem -LiteralPath $InputFolder -File | Where-Object { $_.Name -ne 'README.md' })
+    $looseFiles = @(Get-ChildItem -LiteralPath $InputFolder -File | Where-Object { $_.Name -notin (@('README.md') + $appScriptNames) })
     if ($looseFiles.Count -gt 0) {
         Write-Warning "Skipping files directly in $InputFolder (only app folders are packaged): $(($looseFiles | ForEach-Object { $_.Name }) -join ', ')"
     }
@@ -152,6 +194,7 @@ foreach ($folder in $appFolders) {
                 throw "The setup file has to be inside the app folder: $($setup.FullName)"
             }
         } else {
+            Add-InstallScripts $folder
             $setup = Find-SetupFile $folder
             if (-not $setup -and $PromptForSetupFile) {
                 $setup = Read-SetupFileChoice $folder
